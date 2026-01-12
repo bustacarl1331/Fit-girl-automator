@@ -2,7 +2,11 @@
 
 A robust, Windows 7-styled desktop application to automate downloading games from **FitGirl Repacks** (specifically using the **FuckingFast** mirror).
 
-![Preview](preview_placeholder.png)
+![Screenshot 2026-01-12 112459](https://github.com/user-attachments/assets/607ea825-4066-4e6c-965f-b714b6e5ce51)
+![Screenshot 2026-01-12 105834](https://github.com/user-attachments/assets/9c879743-47a1-46ac-9665-bae28ad2690c)
+![Screenshot 2026-01-12 105713](https://github.com/user-attachments/assets/6bc294c2-081f-475c-a3d5-e6f55ee2ab60)
+
+
 
 ## Features
 
@@ -40,3 +44,4 @@ A robust, Windows 7-styled desktop application to automate downloading games fro
 ## Disclaimer
 
 This tool is for educational purposes and automation convenience only. It is not affiliated with FitGirl Repacks. Please support the original repackers and seed torrents when possible.
+
