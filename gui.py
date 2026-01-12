@@ -31,7 +31,7 @@ class WizardApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("FitGirl Repack Automator")
-        self.geometry("600x450")
+        self.geometry("600x480")
         self.resizable(False, False)
         
         # Set Icon if available (skip for now)
@@ -64,13 +64,24 @@ class WizardApp(tk.Tk):
         
     def ensure_browser_installed(self):
         # We only really need chromium
-        # This is a bit hacky but ensures portability for the EXE
-        import subprocess
+        # Using programmatic install because subprocess fails in frozen EXE
+        from playwright.__main__ import main as playwright_main
+        import sys
+        
         try:
-             # Just try running a dry install command or check version?
-             # Actually, best is just to run `playwright install chromium` quietly.
-             # It initiates a download only if missing.
-             subprocess.run(["playwright", "install", "chromium"], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+             print("Checking/Installing Chromium...")
+             # playwright_main will try to exit system processing, we must catch it
+             try:
+                 # Backup argv
+                 old_argv = sys.argv
+                 sys.argv = ["playwright", "install", "chromium"]
+                 playwright_main()
+             except SystemExit:
+                 pass
+             finally:
+                 sys.argv = old_argv
+                 print("Browser check complete.")
+                 
         except Exception as e:
              print(f"Browser check failed: {e}")
 
@@ -233,24 +244,37 @@ class SelectionPage(tk.Frame):
         tk.Label(header_frame, text="Select Components", font=FONT_HEADER, bg=WHITE_BG).pack(anchor="w", padx=20, pady=5)
         tk.Label(header_frame, text="Which parts of the game do you want to download?", font=FONT_NORMAL, bg=WHITE_BG).pack(anchor="w", padx=20)
         
-        # Main Content
+        # Content Container (Middle)
         content_frame = tk.Frame(self, bg=BG_COLOR)
-        content_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        content_frame.pack(side="top", fill="both", expand=True, padx=10, pady=10)
+        
+        # Bottom Buttons (Pack FIRST at bottom to ensure visibility)
+        btn_frame = tk.Frame(self, bg=BG_COLOR)
+        btn_frame.pack(side="bottom", fill="x", padx=10, pady=10)
+        
+        ttk.Button(btn_frame, text="< Back", command=lambda: controller.show_frame("InputPage")).pack(side="left")
+        ttk.Button(btn_frame, text="Download >", command=self.start_download).pack(side="right")
+        
+        # --- Now fill Content Frame ---
         
         # Path Selector
         path_frame = tk.Frame(content_frame, bg=BG_COLOR)
-        path_frame.pack(fill="x", pady=(0, 10))
+        path_frame.pack(fill="x", pady=(0, 5))
         tk.Label(path_frame, text="Destination Folder:", bg=BG_COLOR).pack(side="left")
         self.path_entry = tk.Entry(path_frame)
         self.path_entry.pack(side="left", fill="x", expand=True, padx=5)
         self.path_entry.insert(0, os.getcwd())
         ttk.Button(path_frame, text="Browse...", command=self.browse_path).pack(side="left")
         
+        # Subfolder Option
+        self.subfolder_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(content_frame, text="Create new subfolder for game", variable=self.subfolder_var, bg=BG_COLOR).pack(anchor="w", pady=(0, 10))
+        
         # Checkbox List
         tk.Label(content_frame, text="Files:", bg=BG_COLOR).pack(anchor="w")
         
         list_frame = tk.Frame(content_frame, bg="white", relief="sunken", bd=1)
-        list_frame.pack(fill="both", expand=True)
+        list_frame.pack(fill="both", expand=True) # This will take remaining space
         
         scrollbar = tk.Scrollbar(list_frame)
         scrollbar.pack(side="right", fill="y")
@@ -267,14 +291,6 @@ class SelectionPage(tk.Frame):
         self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
         
         self.check_vars = []
-        
-        # Bottom Buttons
-        btn_frame = tk.Frame(self, bg=BG_COLOR)
-
-        btn_frame.pack(side="bottom", fill="x", padx=10, pady=10)
-        
-        ttk.Button(btn_frame, text="< Back", command=lambda: controller.show_frame("InputPage")).pack(side="left")
-        ttk.Button(btn_frame, text="Download >", command=self.start_download).pack(side="right")
 
     def _on_mousewheel(self, event):
         self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
@@ -305,11 +321,17 @@ class SelectionPage(tk.Frame):
         optional_files = [f for f in files if f['type'] == 'optional']
         
         # 1. Core Files
+        # 1. Core Files
         if core_files:
-            tk.Label(self.check_frame, text="Core Files (Required):", font=("Segoe UI", 9, "bold"), bg="white", anchor="w").pack(fill="x", pady=(5, 2))
+            tk.Label(self.check_frame, text="Core Files:", font=("Segoe UI", 9, "bold"), bg="white", anchor="w").pack(fill="x", pady=(5, 2))
             for f in core_files:
-                var = tk.BooleanVar(value=True)
-                cb = tk.Checkbutton(self.check_frame, text=f['name'], variable=var, bg="white", anchor="w", state="disabled")
+                # Check history if previously selected, otherwise default True
+                is_selected = True
+                if previously_selected:
+                     is_selected = f['name'] in previously_selected
+                     
+                var = tk.BooleanVar(value=is_selected)
+                cb = tk.Checkbutton(self.check_frame, text=f['name'], variable=var, bg="white", anchor="w")
                 cb.pack(fill="x", padx=10)
                 self.check_vars.append((var, f))
                 
@@ -361,6 +383,7 @@ class SelectionPage(tk.Frame):
         
         self.controller.files_to_download = selected_files
         self.controller.download_path = self.path_entry.get()
+        self.controller.create_subfolder = self.subfolder_var.get()
         
         # Save to History
         selected_names = [f['name'] for f in selected_files]
@@ -487,10 +510,16 @@ class ProgressPage(tk.Frame):
         # Create Game Folder
         # Get game name from URL or use default
         try:
-            game_name = self.controller.downloader.game_url.rstrip('/').split('/')[-1]
-            full_path = os.path.join(base_path, game_name)
-            if not os.path.exists(full_path):
-                os.makedirs(full_path)
+            if getattr(self.controller, 'create_subfolder', True):
+                game_name = self.controller.downloader.game_url.rstrip('/').split('/')[-1]
+                full_path = os.path.join(base_path, game_name)
+                if not os.path.exists(full_path):
+                    os.makedirs(full_path)
+            else:
+                full_path = base_path
+                # Still ensure base path exists
+                if not os.path.exists(full_path):
+                    os.makedirs(full_path)
             
             # Switch to that dir? Or just write to absolute path
             # Let's use absolute paths
@@ -498,6 +527,7 @@ class ProgressPage(tk.Frame):
              full_path = base_path
         
         total_files = len(files)
+        failed_files = []
         
         for i, file_info in enumerate(files):
             if self.controller.cancel_flag:
@@ -505,10 +535,6 @@ class ProgressPage(tk.Frame):
                 
             file_url = file_info['url']
             original_name = file_info['name']
-            
-            # Confirm nice filename
-            # logic: if original name looks like "partXX.rar" use it, else create one
-            # The refactored fetch_info tries to give good names.
             
             save_path = os.path.join(full_path, original_name)
             
@@ -524,6 +550,7 @@ class ProgressPage(tk.Frame):
             
             if not direct_url:
                 print(f"Failed to resolve {original_name}")
+                failed_files.append(original_name)
                 continue
                 
             # 2. Download (UI Mode: Downloading)
@@ -539,13 +566,21 @@ class ProgressPage(tk.Frame):
             
             if not success:
                 print(f"Failed to download {original_name}")
+                failed_files.append(original_name)
         
         if not self.controller.cancel_flag:
             self.total_var.set(100)
-            self.status_action.config(text="Done!")
-            self.set_ui_resolving() # Just to stop the green bar or reset
+            self.set_ui_resolving() # Stop green bar
             self.resolve_pbar.stop()
-            self.current_file_lbl.config(text="All files downloaded successfully.")
+            
+            if failed_files:
+                self.status_action.config(text="Completed with Errors", fg="red")
+                self.current_file_lbl.config(text=f"Failed: {len(failed_files)} files. Check log.")
+                messagebox.showwarning("Download Issues", f"The following files failed to download:\n\n" + "\n".join(failed_files[:5]) + ("\n..." if len(failed_files)>5 else ""))
+            else:
+                self.status_action.config(text="Done!", fg="green")
+                self.current_file_lbl.config(text="All files downloaded successfully.")
+                
             self.cancel_btn.config(text="Close", command=self.controller.destroy)
         else:
              self.resolve_pbar.stop()

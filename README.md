@@ -2,11 +2,7 @@
 
 A robust, Windows 7-styled desktop application to automate downloading games from **FitGirl Repacks** (specifically using the **FuckingFast** mirror).
 
-![Screenshot 2026-01-12 105713](https://github.com/user-attachments/assets/6d6e1e40-9b6c-47b4-aa86-de1f8c7a25f6)
-![Screenshot 2026-01-12 105834](https://github.com/user-attachments/assets/25738dc6-4fe6-4975-8763-c597cb33e279)
-
-
-
+![Preview](preview_placeholder.png)
 
 ## Features
 
@@ -23,20 +19,13 @@ A robust, Windows 7-styled desktop application to automate downloading games fro
 
 ## How to Run
 
-### Option 1: Standalone EXE (Recommended)
-1.  Download the latest `FitGirlAutomator.exe` from Releases.
-2.  Run it.
-3.  *Note*: On first run, it may take a moment to initialize the browser engine required for automation.
-
-### Option 2: Run from Source
-1.  Install Python 3.8+.
-2.  Clone this repository.
-3.  Install dependencies:
+1.  **Install Python**: Ensure you have Python 3.8+ installed.
+2.  **Install Dependencies**:
     ```bash
     pip install -r requirements.txt
     playwright install chromium
     ```
-4.  Run the app:
+3.  **Run the App**:
     ```bash
     python gui.py
     ```

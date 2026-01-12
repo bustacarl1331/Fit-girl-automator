@@ -1,12 +1,27 @@
-import os
+import logging
 import requests
+import os
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 import time
 from playwright.sync_api import sync_playwright
 
+# Setup logging to file
+
+logging.basicConfig(
+    filename='app_debug.log', 
+    level=logging.DEBUG, 
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    filemode='w'
+)
+
+def log_debug(msg):
+    print(msg)
+    logging.debug(msg)
+
 class FitGirlDownloader:
     def __init__(self, game_url):
+        log_debug(f"Initializing Downloader for: {game_url}")
         self.game_url = game_url
         self.session = requests.Session()
         self.session.headers.update({
@@ -94,40 +109,118 @@ class FitGirlDownloader:
                 
         return files_info
 
-    def resolve_single_link_playwright(self, url):
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            final_url = None
-            try:
-                page.goto(url)
-                
-                # Popup handling
-                try:
-                    with page.expect_popup(timeout=2000) as popup_info:
-                        page.click(".link-button, button:has-text('DOWNLOAD')", timeout=2000)
-                    popup = popup_info.value
-                    popup.close()
-                    time.sleep(1)
-                except Exception:
-                    pass
-                
-                # Real Download
-                try:
-                    with page.expect_download(timeout=15000) as download_info:
-                        page.click(".link-button, button:has-text('DOWNLOAD')", timeout=5000)
-                    
-                    download = download_info.value
-                    final_url = download.url
-                    download.cancel()
-                except Exception as e:
-                     print(f" -> Download click failed: {e}")
-
-            except Exception as e:
-                print(f"Resolution failed: {e}")
+    def start_engine(self):
+        """Starts the global Playwright engine if not running."""
+        try:
+            # Check if we need to initialize (if either mismatch)
+            needs_init = False
+            if not hasattr(self, 'playwright') or self.playwright is None:
+                needs_init = True
+            elif not hasattr(self, 'browser') or self.browser is None:
+                 needs_init = True
             
-            browser.close()
-            return final_url
+            if needs_init:
+                log_debug("Starting Playwright Engine...")
+                # Cleanup potential partial state
+                if hasattr(self, 'playwright') and self.playwright:
+                    try: self.playwright.stop()
+                    except: pass
+                self.playwright = None
+                
+                self.playwright = sync_playwright().start()
+                
+                log_debug("Launching Chromium...")
+                # Try headless=True by default for stability, user can use debug build for visible
+                # If we are in debug mode (checking env var or similar? No, just hardcode for now)
+                # Let's stick to HEADLESS=TRUE for the release.
+                self.browser = self.playwright.chromium.launch(headless=True)
+                log_debug("Browser Launched Successfully.")
+                
+        except Exception as e:
+            log_debug(f"CRITICAL: Failed to start engine: {e}")
+            # Clean up so we retry next time instead of partial broken state
+            self.playwright = None
+            self.browser = None
+            raise e
+            
+    def close_engine(self):
+        """Closes the global Playwright engine."""
+        try:
+            if hasattr(self, 'browser') and self.browser:
+                self.browser.close()
+                self.browser = None
+            if hasattr(self, 'playwright') and self.playwright:
+                self.playwright.stop()
+                self.playwright = None
+                log_debug("Playwright Engine Stopped.")
+        except Exception as e:
+            log_debug(f"Error closing engine: {e}")
+
+    def resolve_single_link_playwright(self, url):
+        log_debug(f"Resolving: {url}")
+        try:
+            self.start_engine() # Ensure browser is running
+        except Exception as e:
+            log_debug(f"Engine start failed: {e}")
+            return None
+        
+        page = None
+        final_url = None
+        try:
+            page = self.browser.new_page()
+            log_debug("Page created. Navigating...")
+            
+            # Use domcontentloaded to avoid waiting for heavy ads
+            page.goto(url, timeout=30000, wait_until="domcontentloaded")
+            log_debug("Navigation complete (domcontentloaded).")
+            
+            # Check if we are on fuckingfast
+            if "fuckingfast" not in page.url and "fitgirl" not in page.url:
+                 log_debug(f"Redirected to unexpected URL: {page.url}")
+
+            # Popup handling
+            try:
+                # Wait for button to be visible first
+                log_debug("Waiting for DOWNLOAD button...")
+                page.wait_for_selector(".link-button, button:has-text('DOWNLOAD')", state="visible", timeout=15000)
+                
+                with page.expect_popup(timeout=5000) as popup_info:
+                    log_debug("Attempting to click DOWNLOAD (Popup trigger)...")
+                    page.click(".link-button, button:has-text('DOWNLOAD')", timeout=5000)
+                popup = popup_info.value
+                popup.close()
+                log_debug("Popup handled.")
+                time.sleep(1)
+            except Exception:
+                log_debug("No popup trigger found or timed out (normal).")
+            
+            # Real Download
+            try:
+                # Ensure button is still there
+                page.wait_for_selector(".link-button, button:has-text('DOWNLOAD')", state="visible", timeout=10000)
+                
+                with page.expect_download(timeout=45000) as download_info:
+                    # sometimes the button selector might be tricky, try generic
+                    log_debug("Attempting to click DOWNLOAD (Real)...")
+                    page.click(".link-button, button:has-text('DOWNLOAD')", timeout=10000)
+                
+                download = download_info.value
+                final_url = download.url
+                log_debug(f"Download URL captured: {final_url}")
+                download.cancel()
+            except Exception as e:
+                 log_debug(f" -> Download click not found or timeout: {e}")
+
+        except Exception as e:
+            log_debug(f"Resolution failed with exception: {e}")
+        finally:
+            if page:
+                try:
+                    page.close() # Ensure page is always closed
+                except:
+                    pass
+        
+        return final_url
 
     def download_file(self, url, filename, progress_callback=None, check_cancel=None):
         """
